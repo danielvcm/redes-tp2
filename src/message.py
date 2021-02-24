@@ -52,9 +52,9 @@ class InfoFileMessage(Message):
     def validate_file_name(self):
         max_file_name_len = 15
         if len(self.file_name) > max_file_name_len:
-            raise UnicodeEncodeError('Nome do arquivo grande demais')
-        if self.file_name[-4]!='.':
-            raise UnicodeEncodeError('Nome do arquivo deve terminar com . + 3 caracteres')
+            raise UnicodeEncodeError('asc',self.file_name, 0, 1,'Nome do arquivo grande demais')
+        if len(self.file_name)<5 or self.file_name[-4]!='.':
+            raise UnicodeEncodeError('asc',self.file_name, 0, 1,'Nome do arquivo deve terminar com . + 3 caracteres')
     
     def encode(self):
         self.validate_file_name()

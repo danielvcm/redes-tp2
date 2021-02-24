@@ -2,7 +2,7 @@ import socket
 import argparse
 from src import comum
 from src.message_factory import MessageFactory
-#TODO ler arquivo dado na entrada, pegar o tamanho, dividir em pedaços de arquivo
+import os
 
 def main():
     args = get_arguments()
@@ -16,8 +16,7 @@ def main():
         terminate_control_channel(client)
         return
     
-    file_content_idk = send_info_file(client, "teste.txt")
-    if not file_content_idk:
+    if not send_info_file(client, args.file):
         terminate_control_channel(client)
         return
     
@@ -53,18 +52,26 @@ def handle_connection_message(client):
 def send_info_file(client, file_name):
     #TODO: get file size and contents
     try:
-        message = MessageFactory.build("INFO FILE", file_name= file_name, file_size= 200)
+        file_size = os.path.getsize('./'+file_name)
+    except:
+        print(f"File {file_name} either doesn't exist or this program do not have access to it")
+        return False
+    
+        
+    try:
+        message = MessageFactory.build("INFO FILE", file_name= file_name, file_size= file_size)
+    
     except UnicodeEncodeError as err:
         print("Nome não permitido")
         if 'ascii' in err.args[0]:
             print("So podem caracteres da tabela ASCII")
         else:
-            print(err.args[0])
-        return None
+            print(err.args[4])
+        return False
 
     print(f"[CONTROL CHANNEL] Sending INFO FILE...")
     client.send(message)
-    return 1
+    return True
 
 def handle_fim(client):
     msg = client.recv(comum.SIMPLE_MESSAGE_SIZE)
@@ -74,7 +81,17 @@ def handle_fim(client):
         print(f"[CONTROL CHANNEL] Server finished processing file")
         return True
     return False
-        
+
+def get_file_payloads(file_name):
+    file_payloads = []
+
+    with open(file_name,'rb') as file_to_send:
+        payload = file_to_send.read(comum.MAX_FILE_PART_SIZE)
+        while payload != b"":
+            file_payloads.append(payload)
+            payload = file_to_send.read(comum.MAX_FILE_PART_SIZE)
+
+    return file_payloads
 
 def terminate_control_channel(client):
     print(f"[CONTROL CHANNEL] Terminating connection")

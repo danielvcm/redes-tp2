@@ -3,6 +3,7 @@ import socket
 SIMPLE_MESSAGE_SIZE = 2
 CONNECTION_MESSAGE_SIZE = 6
 INFO_FILE_MESSAGE_SIZE = 25
+MAX_FILE_PART_SIZE = 1000
 
 def create_socket(ip, socket_type):
     if is_valid_ipv6_address(ip):
