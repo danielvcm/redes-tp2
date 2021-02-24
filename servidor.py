@@ -11,10 +11,10 @@ UDP_PORT = 5042
 #TODO Criar estrutura de dados pra receber o arquivo
 #   importante ter: addr do cliente, janela deslizante (?), vetor com pedaços do arquivo (outra classe pedaço?)
 class ConnectingClient:
-    def __init__(self, addr: tuple, control_channel: socket.socket, data_server: socket.socket) -> None:
+    def __init__(self, addr: tuple, control_channel: socket.socket, data_channel: socket.socket) -> None:
         self.addr = addr
         self.control_channel = control_channel
-        self.data_server = data_server
+        self.data_channel = data_channel
     
     def create_streamed_file(self, file_name, file_size):
         self.streamed_file = StreamedFile(self.addr, file_name, file_size)
@@ -24,7 +24,6 @@ def main():
     host = socket.gethostbyname(socket.gethostname())
 
     tcp_server = create_server(host, args.port, socket.SOCK_STREAM)
-    udp_server = create_server(host, UDP_PORT, socket.SOCK_DGRAM)
 
     tcp_server.listen()
     print(f"TCP Server listening on {host}:{args.port}...")
@@ -32,12 +31,13 @@ def main():
     try:
         while True:
             control_channel, addr = tcp_server.accept()
-            thread = threading.Thread(target = handle_client, args = (ConnectingClient(addr,control_channel,udp_server),))
+            data_channel = create_server(host, 0, socket.SOCK_DGRAM) #quando se passa 0, o SO te dá uma porta livre
+
+            thread = threading.Thread(target = handle_client, args = (ConnectingClient(addr,control_channel,data_channel),))
             thread.start()
     
     except KeyboardInterrupt:
         tcp_server.close()
-        udp_server.close()
         print("\nServers closing...")
         exit()
 
@@ -70,8 +70,9 @@ def handle_client(client: ConnectingClient):
 
     send_fim(client)
 
-    print(f"[{client.addr} - CONTROL CHANNEL] Closing connection...")
+    print(f"[{client.addr} - CONTROL CHANNEL] Closing channel...")
     client.control_channel.close()
+
     return
 
 def handle_hello(client):
@@ -84,7 +85,7 @@ def handle_hello(client):
     return True
 
 def send_connection(client):
-    udp_port = client.data_server.getsockname()[1]
+    udp_port = client.data_channel.getsockname()[1]
     msg = MessageFactory.build("CONNECTION",udp_port = udp_port)
     print(f"[{client.addr} - CONTROL CHANNEL] Sending CONNECTION message with port {udp_port}")
     client.control_channel.send(msg)
@@ -106,8 +107,10 @@ def send_ok(client):
     client.control_channel.send(msg)
 
 def send_fim(client):
-    print(f"[{client.addr} - CONTROL CHANNEL] Finished processing file")
-    print(f"[{client.addr} - CONTROL CHANNEL] Acknowledging client")
+    print(f"[{client.addr} - DATA CHANNEL] Finished processing file")
+    print(f"[{client.addr} - DATA CHANNEL] Closing channel...")
+    client.data_channel.close()
+    print(f"[{client.addr} - CONTROL CHANNEL] Sending FIM")
     msg = MessageFactory.build("FIM")
     client.control_channel.send(msg)
 
