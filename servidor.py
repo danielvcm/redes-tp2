@@ -67,7 +67,8 @@ def handle_client(client: ConnectingClient):
         return
     
     send_ok(client)
-
+    msg = client.data_channel.recvmsg(comum.FILE_MESSAGE_SIZE)
+    print(msg)
     send_fim(client)
 
     print(f"[{client.addr} - CONTROL CHANNEL] Closing channel...")

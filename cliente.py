@@ -1,9 +1,41 @@
-import socket
-import argparse
 from src import comum
 from src.message_factory import MessageFactory
-import os
+from src.sliding_window import SlidingWindow
 
+import socket
+import argparse
+import threading
+import os
+import time
+
+TIMEOUT = 5
+
+class FileControl:
+    def __init__(self, file_name, data_channel: socket.socket, udp_addr: tuple) -> None:
+        self.payloads = self.get_file_payloads(file_name)
+
+        file_size = os.path.getsize('./'+file_name)
+        self.sliding_window = SlidingWindow(file_size)
+
+        self.data_channel = data_channel
+        self.udp_addr = udp_addr
+
+    
+    def get_file_payloads(self, file_name):
+        file_payloads = {}
+
+        with open(file_name,'rb') as file_to_send:
+            serial_number = 0
+            payload = file_to_send.read(comum.MAX_FILE_PART_SIZE)
+            while payload != b"":
+                file_payloads[serial_number] = payload
+
+                serial_number +=1
+                payload = file_to_send.read(comum.MAX_FILE_PART_SIZE)
+
+        return file_payloads
+
+    
 def main():
     args = get_arguments()
 
@@ -15,7 +47,7 @@ def main():
     if not udp_port:
         terminate_control_channel(client)
         return
-    
+
     if not send_info_file(client, args.file):
         terminate_control_channel(client)
         return
@@ -23,8 +55,16 @@ def main():
     if not handle_ok(client):
         terminate_control_channel(client)
         return
-    
+        
+    udp_addr = (args.ip, udp_port)
+    data_channel = comum.create_socket(args.ip, socket.SOCK_DGRAM)
+    print("[DATA CHANNEL] Connected to UDP server")
+
+    file_control = FileControl(args.file,data_channel,udp_addr)
+    threading.Thread(target = send_file,args = (file_control,)).start()
+
     while True:
+        #handle acks
         if handle_fim(client):
             print(f"[CONTROL CHANNEL] Closing connection...")
             client.close()
@@ -95,16 +135,34 @@ def handle_fim(client):
         return True
     return False
 
-def get_file_payloads(file_name):
-    file_payloads = []
+def send_file(file_control: FileControl):
+    i = 0
+    while True:
+        if i == len(file_control.payloads):
+            break
+        if file_control.sliding_window.can_send(i):
+            threading.Thread(target = send_file_part,args = (file_control,i)).start()
+            i+=1
+        else:
+            time.sleep(1)
+            
 
-    with open(file_name,'rb') as file_to_send:
-        payload = file_to_send.read(comum.MAX_FILE_PART_SIZE)
-        while payload != b"":
-            file_payloads.append(payload)
-            payload = file_to_send.read(comum.MAX_FILE_PART_SIZE)
+    
+def send_file_part(file_control: FileControl, serial_number):
+    payload = file_control.payloads[serial_number]
+    message = MessageFactory.build("FILE",serial_number = serial_number, payload = payload, payload_size = len(payload))
 
-    return file_payloads
+    #enquanto o pacote não tiver sido enviado corretamente
+    while not file_control.sliding_window.get_transmitted(serial_number):
+        file_control.data_channel.sendto(message, file_control.udp_addr)
+        file_control.sliding_window.set_transmitted(serial_number,True)
+        
+        #essa thread dorme por TIMEOUT segundos
+        time.sleep(TIMEOUT)
+        
+        #se depois de TIMEOUT segundos o arquivo ainda não foi acked pelo servidor, se mantém no loop
+        if not file_control.sliding_window.get_acked(serial_number):
+            file_control.sliding_window.set_transmitted(serial_number,False)
 
 def terminate_control_channel(client):
     print(f"[CONTROL CHANNEL] Terminating connection")
