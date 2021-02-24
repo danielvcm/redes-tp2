@@ -1,8 +1,10 @@
 import socket
 import threading
 import argparse
+
 from src import comum
 from src.message_factory import MessageFactory
+from src.streamed_file import StreamedFile
 
 UDP_PORT = 5042
 
@@ -13,6 +15,9 @@ class ConnectingClient:
         self.addr = addr
         self.control_channel = control_channel
         self.data_server = data_server
+    
+    def create_streamed_file(self, file_name, file_size):
+        self.streamed_file = StreamedFile(self.addr, file_name, file_size)
 
 def main():
     args = get_arguments()
@@ -60,6 +65,8 @@ def handle_client(client: ConnectingClient):
     if not handle_info_file(client):
         terminate_control_channel(client)
         return
+    
+    send_ok(client)
 
     send_fim(client)
 
@@ -89,8 +96,14 @@ def handle_info_file(client):
     if decoded_message.type != "INFO FILE":
         print(f"[{client.addr} - CONTROL CHANNEL] Client did not sent a valid INFO FILE")
         return False
-    print(decoded_message.file_name, decoded_message.file_size)
+    client.create_streamed_file(decoded_message.file_name, decoded_message.file_size)
+    print(f"[{client.addr} - CONTROL CHANNEL] Finished allocating structures for file")
     return True
+
+def send_ok(client):
+    print(f"[{client.addr} - CONTROL CHANNEL] Sending OK")
+    msg = MessageFactory.build("OK")
+    client.control_channel.send(msg)
 
 def send_fim(client):
     print(f"[{client.addr} - CONTROL CHANNEL] Finished processing file")

@@ -20,6 +20,10 @@ def main():
         terminate_control_channel(client)
         return
     
+    if not handle_ok(client):
+        terminate_control_channel(client)
+        return
+    
     while True:
         if handle_fim(client):
             print(f"[CONTROL CHANNEL] Closing connection...")
@@ -50,14 +54,12 @@ def handle_connection_message(client):
     return decoded_message.udp_port
 
 def send_info_file(client, file_name):
-    #TODO: get file size and contents
     try:
         file_size = os.path.getsize('./'+file_name)
     except:
         print(f"File {file_name} either doesn't exist or this program do not have access to it")
         return False
     
-        
     try:
         message = MessageFactory.build("INFO FILE", file_name= file_name, file_size= file_size)
     
@@ -71,6 +73,17 @@ def send_info_file(client, file_name):
 
     print(f"[CONTROL CHANNEL] Sending INFO FILE...")
     client.send(message)
+    return True
+
+def handle_ok(client):
+    msg = client.recv(comum.SIMPLE_MESSAGE_SIZE)
+    decoded_message = MessageFactory.decode(msg)
+
+    if decoded_message.type != "OK":
+        print(f"[CONTROL CHANNEL] Server did not send OK")
+        return False
+    
+    print(f"[CONTROL CHANNEL] Received an OK to proceed sending the file")
     return True
 
 def handle_fim(client):
