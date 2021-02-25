@@ -2,7 +2,7 @@ from . import comum
 import threading
 class SlidingWindow:
     class Cell:
-        def __init__(self, serial_number, transmitted = False, acked = True) -> None:
+        def __init__(self, serial_number, transmitted = False, acked = False) -> None:
             self.serial_number = serial_number
             self.transmitted = transmitted
             self.acked = acked

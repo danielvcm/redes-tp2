@@ -6,10 +6,6 @@ from src import comum
 from src.message_factory import MessageFactory
 from src.streamed_file import StreamedFile
 
-UDP_PORT = 5042
-
-#TODO Criar estrutura de dados pra receber o arquivo
-#   importante ter: addr do cliente, janela deslizante (?), vetor com pedaços do arquivo (outra classe pedaço?)
 class ConnectingClient:
     def __init__(self, addr: tuple, control_channel: socket.socket, data_channel: socket.socket) -> None:
         self.addr = addr
@@ -17,7 +13,7 @@ class ConnectingClient:
         self.data_channel = data_channel
     
     def create_streamed_file(self, file_name, file_size):
-        self.streamed_file = StreamedFile(self.addr, file_name, file_size)
+        self.streamed_file = StreamedFile(file_name, file_size)
 
 def main():
     args = get_arguments()
@@ -67,8 +63,15 @@ def handle_client(client: ConnectingClient):
         return
     
     send_ok(client)
-    msg = client.data_channel.recvmsg(comum.FILE_MESSAGE_SIZE)
-    print(msg)
+
+    handle_file(client)
+
+    if not client.streamed_file.export_file():
+        print(f"[{client.addr} - DATA CHANNEL] something went wrong while exporting file")
+        terminate_data_channel(client)
+        terminate_control_channel(client)
+        
+    
     send_fim(client)
 
     print(f"[{client.addr} - CONTROL CHANNEL] Closing channel...")
@@ -107,6 +110,17 @@ def send_ok(client):
     msg = MessageFactory.build("OK")
     client.control_channel.send(msg)
 
+def handle_file(client):
+    print(f"[{client.addr} - DATA CHANNEL] Started listening for file parts...")
+    while not client.streamed_file.finished_streaming():
+        msg = client.data_channel.recvmsg(comum.FILE_MESSAGE_SIZE)
+        decoded_message = MessageFactory.decode(msg[0])
+        print(f"[{client.addr} - DATA CHANNEL] Received payload #{decoded_message.serial_number}...")
+        client.streamed_file.set_payload(decoded_message.serial_number, decoded_message.payload)
+        #ack
+    
+
+
 def send_fim(client):
     print(f"[{client.addr} - DATA CHANNEL] Finished processing file")
     print(f"[{client.addr} - DATA CHANNEL] Closing channel...")
@@ -118,6 +132,10 @@ def send_fim(client):
 def terminate_control_channel(client):
     print(f"[{client.addr} - CONTROL CHANNEL] Terminating connection")
     client.control_channel.close()
+
+def terminate_data_channel(client):
+    print(f"[{client.addr} - DATA CHANNEL] Terminating connection")
+    client.data_channel.close()
 
 if __name__== "__main__":
     main()

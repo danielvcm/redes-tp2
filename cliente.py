@@ -154,6 +154,7 @@ def send_file_part(file_control: FileControl, serial_number):
 
     #enquanto o pacote não tiver sido enviado corretamente
     while not file_control.sliding_window.get_transmitted(serial_number):
+        print(f"[DATA CHANNEL] Sending payload #{serial_number}")
         file_control.data_channel.sendto(message, file_control.udp_addr)
         file_control.sliding_window.set_transmitted(serial_number,True)
         
@@ -162,6 +163,7 @@ def send_file_part(file_control: FileControl, serial_number):
         
         #se depois de TIMEOUT segundos o arquivo ainda não foi acked pelo servidor, se mantém no loop
         if not file_control.sliding_window.get_acked(serial_number):
+            print(f"[DATA CHANNEL] Payload #{serial_number} wasn't acked, will resend")
             file_control.sliding_window.set_transmitted(serial_number,False)
 
 def terminate_control_channel(client):
