@@ -15,6 +15,7 @@ class FileControl:
         self.payloads = self.get_file_payloads(file_name)
 
         file_size = os.path.getsize('./'+file_name)
+        print("file size:", file_size)
         self.sliding_window = SlidingWindow(file_size)
 
         self.data_channel = data_channel
@@ -63,13 +64,20 @@ def main():
     file_control = FileControl(args.file,data_channel,udp_addr)
     threading.Thread(target = send_file,args = (file_control,)).start()
 
-    while True:
-        #handle acks
-        if handle_fim(client):
-            print(f"[CONTROL CHANNEL] Closing connection...")
-            client.close()
-            break
+    if not handle_ack(client, file_control):
+        terminate_data_channel(data_channel)
+        terminate_control_channel(client)
+        return
+    
+    if not handle_fim(client):
+        terminate_data_channel(data_channel)
+        terminate_control_channel(client)
+        return
 
+    print(f"[CONTROL CHANNEL] Closing connection...")
+    client.close()
+    print(f"[DATA CHANNEL] Closing connection...")
+    data_channel.close()
 
 def get_arguments():
     parser = argparse.ArgumentParser("Cliente que envia arquivo para nuvem")
@@ -126,27 +134,16 @@ def handle_ok(client):
     print(f"[CONTROL CHANNEL] Received an OK to proceed sending the file")
     return True
 
-def handle_fim(client):
-    msg = client.recv(comum.SIMPLE_MESSAGE_SIZE)
-    decoded_message = MessageFactory.decode(msg)
-    print(f"[CONTROL CHANNEL] Received a", decoded_message.type)
-    if decoded_message.type == "FIM":
-        print(f"[CONTROL CHANNEL] Server finished processing file")
-        return True
-    return False
-
 def send_file(file_control: FileControl):
     i = 0
     while True:
         if i == len(file_control.payloads):
             break
-        if file_control.sliding_window.can_send(i):
+        elif file_control.sliding_window.can_send(i):
             threading.Thread(target = send_file_part,args = (file_control,i)).start()
             i+=1
         else:
             time.sleep(1)
-            
-
     
 def send_file_part(file_control: FileControl, serial_number):
     payload = file_control.payloads[serial_number]
@@ -166,9 +163,39 @@ def send_file_part(file_control: FileControl, serial_number):
             print(f"[DATA CHANNEL] Payload #{serial_number} wasn't acked, will resend")
             file_control.sliding_window.set_transmitted(serial_number,False)
 
+def handle_ack(client: socket.socket, file_control: FileControl):
+    acked_msgs = 0
+    print(len(file_control.payloads))
+    while acked_msgs < len(file_control.payloads):
+        msg = client.recv(comum.ACK_MESSAGE_SIZE)
+        decoded_message = MessageFactory.decode(msg)
+        if decoded_message.type != "ACK" and decoded_message.type == 'FIM':
+            print(f"[CONTROL CHANNEL] Did not receive enough ACKs")
+            return False
+        if decoded_message.type == 'ACK':
+            print(f"[CONTROL CHANNEL] Received ACK for payload #{decoded_message.serial_number}")
+            file_control.sliding_window.acked(decoded_message.serial_number)
+            acked_msgs +=1
+    return True
+        
+def handle_fim(client):
+    msg = client.recv(comum.SIMPLE_MESSAGE_SIZE)
+    decoded_message = MessageFactory.decode(msg)
+
+    if decoded_message.type != "FIM":
+        print(f"[CONTROL CHANNEL] Server did not send FIM")
+        return False
+
+    print(f"[CONTROL CHANNEL] Server finished processing file")
+    return True
+
 def terminate_control_channel(client):
     print(f"[CONTROL CHANNEL] Terminating connection")
     client.close()
+
+def terminate_data_channel(data_channel):
+    print(f"[DATA CHANNEL] Terminating connection")
+    data_channel.close()
 
 if __name__ == "__main__":
     main()

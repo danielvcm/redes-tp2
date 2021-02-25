@@ -1,6 +1,7 @@
 import socket
 import threading
 import argparse
+import time
 
 from src import comum
 from src.message_factory import MessageFactory
@@ -117,9 +118,18 @@ def handle_file(client):
         decoded_message = MessageFactory.decode(msg[0])
         print(f"[{client.addr} - DATA CHANNEL] Received payload #{decoded_message.serial_number}...")
         client.streamed_file.set_payload(decoded_message.serial_number, decoded_message.payload)
-        #ack
+        threading.Thread(target = handle_ack, args = (client, decoded_message.serial_number)).start()
     
-
+def handle_ack(client: ConnectingClient, serial_number):
+    while True:
+        if client.streamed_file.sliding_window.can_send(serial_number):
+            print(f"[{client.addr} - CONTROL CHANNEL] Sending ACK to payload #{serial_number}...")
+            message = MessageFactory.build('ACK', serial_number = serial_number)
+            client.control_channel.send(message)
+            client.streamed_file.sliding_window.acked(serial_number)
+            break
+        else:
+            time.sleep(1)
 
 def send_fim(client):
     print(f"[{client.addr} - DATA CHANNEL] Finished processing file")

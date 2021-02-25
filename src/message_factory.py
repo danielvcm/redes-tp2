@@ -1,4 +1,4 @@
-from .message import Message, ConnectionMessage, InfoFileMessage, FileMessage
+from .message import AckMessage, Message, ConnectionMessage, InfoFileMessage, FileMessage
 from . import comum
 class MessageFactory:
     def build(message_type, **kwargs):
@@ -25,6 +25,11 @@ class MessageFactory:
             message = FileMessage(serial_number, payload_size, payload)
             return message.encode()
         
+        elif message_type == 'ACK':
+            serial_number = int(MessageFactory.get_arg('serial_number', kwargs))
+            message = AckMessage(serial_number)
+            return message.encode()
+        
         else: #mensagens simples
             return Message(message_type).encode()
 
@@ -39,6 +44,9 @@ class MessageFactory:
             
             elif type_header == Message.message_types['FILE']:
                 return FileMessage.decode(message)
+            
+            elif type_header == Message.message_types['ACK']:
+                return AckMessage.decode(message)
             
             else:
                 return Message.decode(message)

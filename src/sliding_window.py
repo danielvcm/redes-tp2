@@ -65,7 +65,7 @@ class SlidingWindow:
             if serial_number < self.window_size:
                 self.lock.release()
                 return True
-        if serial_number > self.transmit_edge and serial_number < self.transmit_edge + self.window_size :
+        elif serial_number > self.transmit_edge and serial_number < self.transmit_edge + self.window_size:
             self.lock.release()
             return True
         
@@ -86,8 +86,10 @@ class SlidingWindow:
             self.lock.release()
             return
         acked_edge = self.transmit_edge
-        for i in range(self.transmit_edge, self.window_size):
-            if self.array[i].get_acked() == True:
+        for i in range(self.transmit_edge, self.transmit_edge+self.window_size):
+            if i >= len(self.array):
+                break
+            elif self.array[i].get_acked() == True:
                 acked_edge = i
             else:
                 break

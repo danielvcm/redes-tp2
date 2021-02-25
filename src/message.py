@@ -128,5 +128,25 @@ class FileMessage(Message):
             payload = self.payload + b' '*(comum.MAX_FILE_PART_SIZE-len(self.payload))
         return payload
 
+class AckMessage(Message):
+    max_serial_number_len = 4
 
-
+    def __init__(self, serial_number):
+        super().__init__("ACK")
+        self.serial_number = int(serial_number)
+    
+    def encode(self):
+        serial_number_bytes = self.convert_serial_number_to_bytes()
+        message = Message.message_types[self.type]+serial_number_bytes
+        return message
+    
+    def decode(message):
+        serial_number = int.from_bytes(message[comum.SIMPLE_MESSAGE_SIZE:],BYTE_ORDER)
+        return AckMessage(serial_number)
+    
+    def convert_serial_number_to_bytes(self):
+        try:
+            serial_number_bytes = self.serial_number.to_bytes(self.max_serial_number_len, BYTE_ORDER)
+            return serial_number_bytes
+        except OverflowError:
+            raise Exception(f'Serial number {self.serial_number} is too long')
