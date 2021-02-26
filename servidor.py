@@ -5,6 +5,7 @@ import time
 import logging
 
 from src import comum
+from src import streamed_file
 from src.comum import LogHelper
 from src.message_factory import MessageFactory
 from src.streamed_file import StreamedFile
@@ -14,6 +15,7 @@ class ConnectingClient:
         self.addr = addr
         self.control_channel = control_channel
         self.data_channel = data_channel
+        self.streamed_file = None
     
     def create_streamed_file(self, file_name, file_size):
         self.streamed_file = StreamedFile(file_name, file_size)
@@ -68,19 +70,19 @@ def handle_client(client: ConnectingClient):
     
     send_ok(client)
 
-    handle_file(client)
+    if not handle_file(client):
+        terminate_data_channel(client)
+        terminate_control_channel(client)
 
     if not client.streamed_file.export_file():
         logging.warning("Something went wrong while exporting file", extra=LogHelper.set_extra('DATA',client.addr))
         terminate_data_channel(client)
-        terminate_control_channel(client)
-        
+        terminate_control_channel(client)    
     
     send_fim(client)
 
     logging.info("Closing channel...",extra=LogHelper.set_extra('CONTROL',client.addr))
     client.control_channel.close()
-
     return
 
 def handle_hello(client):
@@ -88,7 +90,7 @@ def handle_hello(client):
     decoded_message = MessageFactory.decode(msg)
     logging.debug(f"Received a {decoded_message.type}", extra=LogHelper.set_extra('CONTROL',client.addr))
     if decoded_message.type != "HELLO":
-        logging.warning("Client did not sent HELLO",extra=LogHelper.set_extra("CONTROL", client.addr))
+        logging.warning("Client did not send HELLO",extra=LogHelper.set_extra("CONTROL", client.addr))
         return False
     return True
 
@@ -103,7 +105,7 @@ def handle_info_file(client):
     decoded_message = MessageFactory.decode(msg)
     logging.debug(f"Received a {decoded_message.type}", extra=LogHelper.set_extra('CONTROL',client.addr))
     if decoded_message.type != "INFO FILE":
-        logging.warning("Client did not sent a valid INFO FILE", extra=LogHelper.set_extra('CONTROL',client.addr))
+        logging.warning("Client did not send a valid INFO FILE", extra=LogHelper.set_extra('CONTROL',client.addr))
         return False
     client.create_streamed_file(decoded_message.file_name, decoded_message.file_size)
     logging.debug("Finished allocating structures for file", extra=LogHelper.set_extra('CONTROL',client.addr))
@@ -119,20 +121,25 @@ def handle_file(client):
     while not client.streamed_file.finished_streaming():
         msg = client.data_channel.recvmsg(comum.FILE_MESSAGE_SIZE)
         decoded_message = MessageFactory.decode(msg[0])
-        logging.debug(f"Received payload #{decoded_message.serial_number}...",extra=LogHelper.set_extra('DATA',client.addr))
-        client.streamed_file.set_payload(decoded_message.serial_number, decoded_message.payload)
-        threading.Thread(target = handle_ack, args = (client, decoded_message.serial_number)).start()
-    
-def handle_ack(client: ConnectingClient, serial_number):
-    while True:
-        if client.streamed_file.sliding_window.can_send(serial_number):
-            logging.debug(f"Sending ACK to payload #{serial_number}...",extra=LogHelper.set_extra('DATA',client.addr))
-            message = MessageFactory.build('ACK', serial_number = serial_number)
-            client.control_channel.send(message)
-            client.streamed_file.sliding_window.acked(serial_number)
-            break
+        if decoded_message.type == "FILE":
+            threading.Thread(target = handle_file_part, args = (client, decoded_message)).start()
         else:
-            time.sleep(1)
+            logging.warning("Client did not send a valid FILE message",extra=LogHelper.set_extra('DATA',client.addr))
+            return False
+    return True
+
+def handle_file_part(client, decoded_message):
+    logging.debug(f"Received payload #{decoded_message.serial_number}...",extra=LogHelper.set_extra('DATA',client.addr))
+    client.streamed_file.set_payload(decoded_message.serial_number, decoded_message.payload)
+    threading.Thread(target = send_ack, args = (client, decoded_message.serial_number)).start()
+
+def send_ack(client: ConnectingClient, serial_number):
+    logging.debug(f"Sending ACK to payload #{serial_number}...",extra=LogHelper.set_extra('DATA',client.addr))
+    message = MessageFactory.build('ACK', serial_number = serial_number)
+
+    client.control_channel.send(message)
+    client.streamed_file.sliding_window.acked(serial_number)
+
 
 def send_fim(client):
     logging.info(f"Finished processing file",extra=LogHelper.set_extra('DATA',client.addr))

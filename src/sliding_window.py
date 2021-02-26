@@ -2,8 +2,7 @@ from . import comum
 import threading
 class SlidingWindow:
     class Cell:
-        def __init__(self, serial_number, transmitted = False, acked = False) -> None:
-            self.serial_number = serial_number
+        def __init__(self,transmitted = False, acked = False) -> None:
             self.transmitted = transmitted
             self.acked = acked
             self.lock = threading.Lock()
@@ -47,7 +46,7 @@ class SlidingWindow:
     
     def get_window_end(self):
         self.lock.acquire()
-        value = self.transmit_edge + comum.WINDOW_SIZE
+        value = self.transmit_edge + self.window_size
         self.lock.release()
         return value
     
@@ -55,7 +54,7 @@ class SlidingWindow:
         array = {}
         serial_number = 0
         for i in range(0,file_size,comum.MAX_FILE_PART_SIZE):
-            array[serial_number] = SlidingWindow.Cell(serial_number)
+            array[serial_number] = SlidingWindow.Cell()
             serial_number+=1
         return array
 
@@ -73,6 +72,8 @@ class SlidingWindow:
         return False
     
     def acked(self, serial_number):
+        if self.array[serial_number].get_acked():
+            return
         if serial_number == 0:
             self.transmit_edge = serial_number
             self.array[serial_number].set_acked(True)

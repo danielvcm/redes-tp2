@@ -30,6 +30,7 @@ class FileControl:
         with open(file_name,'rb') as file_to_send:
             serial_number = 0
             payload = file_to_send.read(comum.MAX_FILE_PART_SIZE)
+
             while payload != b"":
                 file_payloads[serial_number] = payload
 
@@ -42,10 +43,13 @@ class FileControl:
 def main():
     args = get_arguments()
     logging.basicConfig(level=LogHelper.log_levels[args.verbose],format=LogHelper.log_format)
+
     tcp_addr = (args.ip, args.port)
     client = comum.create_socket(args.ip,socket.SOCK_STREAM)  
     client.connect(tcp_addr)
+
     send_hello(client)
+
     udp_port = handle_connection_message(client)
     if not udp_port:
         terminate_control_channel(client)
@@ -75,7 +79,7 @@ def main():
         terminate_data_channel(data_channel)
         terminate_control_channel(client)
         return
-
+    
     print(f"[{udp_addr[0]}:{udp_addr[1]} - DATA CHANNEL] Closing connection...")
     data_channel.close()
 
@@ -92,8 +96,8 @@ def get_arguments():
     return parser.parse_args()
 
 def send_hello(client:socket.socket):
-    print(f"[{client.getsockname()[0]}:{client.getsockname()[1]} - CONTROL CHANNEL]Connected to TCP server")
-    logging.debug("Sending HELLO...",extra=LogHelper.set_extra('CONTROL',client.getsockname()))
+    print(f"[{client.getpeername()[0]}:{client.getpeername()[1]} - CONTROL CHANNEL]Connected to TCP server")
+    logging.debug("Sending HELLO...",extra=LogHelper.set_extra('CONTROL',client.getpeername()))
     message = MessageFactory.build("HELLO")
     client.send(message)
 
@@ -101,9 +105,9 @@ def handle_connection_message(client):
     msg = client.recv(comum.CONNECTION_MESSAGE_SIZE)
     decoded_message = MessageFactory.decode(msg)
     if decoded_message.type != "CONNECTION":
-        logging.warning("Server did not sent a valid CONNECTION message",extra=LogHelper.set_extra('CONTROL',client.getsockname()))
+        logging.warning("Server did not send a valid CONNECTION message",extra=LogHelper.set_extra('CONTROL',client.getpeername()))
         return None
-    logging.debug(f"Received a CONNECTION message with port {decoded_message.udp_port}",extra=LogHelper.set_extra('CONTROL',client.getsockname()))
+    logging.debug(f"Received a CONNECTION message with port {decoded_message.udp_port}",extra=LogHelper.set_extra('CONTROL',client.getpeername()))
     return decoded_message.udp_port
 
 def send_info_file(client, file_name):
@@ -124,7 +128,7 @@ def send_info_file(client, file_name):
             print(err.args[4])
         return False
 
-    logging.debug(f"Sending INFO FILE...",extra=LogHelper.set_extra('CONTROL',client.getsockname()))
+    logging.debug(f"Sending INFO FILE...",extra=LogHelper.set_extra('CONTROL',client.getpeername()))
     client.send(message)
     return True
 
@@ -133,10 +137,10 @@ def handle_ok(client):
     decoded_message = MessageFactory.decode(msg)
 
     if decoded_message.type != "OK":
-        logging.warning(f"Server did not send OK",extra=LogHelper.set_extra('CONTROL',client.getsockname()))
+        logging.warning(f"Server did not send OK",extra=LogHelper.set_extra('CONTROL',client.getpeername()))
         return False
     
-    logging.debug(f"Received an OK to proceed sending the file",extra=LogHelper.set_extra('CONTROL',client.getsockname()))
+    logging.debug(f"Received an OK to proceed sending the file",extra=LogHelper.set_extra('CONTROL',client.getpeername()))
     return True
 
 def send_file(file_control: FileControl):
@@ -158,6 +162,7 @@ def send_file_part(file_control: FileControl, serial_number):
     #enquanto o pacote não tiver sido enviado corretamente
     while not file_control.sliding_window.get_transmitted(serial_number):
         logging.debug(f"Sending payload #{serial_number}",extra=LogHelper.set_extra('DATA',file_control.udp_addr))
+        
         file_control.data_channel.sendto(message, file_control.udp_addr)
         file_control.sliding_window.set_transmitted(serial_number,True)
         
@@ -170,6 +175,7 @@ def send_file_part(file_control: FileControl, serial_number):
             file_control.sliding_window.set_transmitted(serial_number,False)
 
 def handle_ack(client: socket.socket, file_control: FileControl):
+    
     acked_msgs = 0
     progress_bar = None
     if logging.getLevelName(logging.root.level) !=  'DEBUG':
@@ -179,36 +185,40 @@ def handle_ack(client: socket.socket, file_control: FileControl):
     while acked_msgs < len(file_control.payloads):
         msg = client.recv(comum.ACK_MESSAGE_SIZE)
         decoded_message = MessageFactory.decode(msg)
-        if decoded_message.type != "ACK" and decoded_message.type == 'FIM':
-            logging.warning("Did not receive enough ACKs",extra=LogHelper.set_extra('CONTROL',client.getsockname()))
+        if decoded_message.type != "ACK":
+            logging.warning("Did not receive enough ACKs",extra=LogHelper.set_extra('CONTROL',client.getpeername()))
             return False
         if decoded_message.type == 'ACK':
-            logging.debug(f"Received ACK for payload #{decoded_message.serial_number}",extra=LogHelper.set_extra('CONTROL',client.getsockname()))
-            file_control.sliding_window.acked(decoded_message.serial_number)
+            logging.debug(f"Received ACK for payload #{decoded_message.serial_number}",extra=LogHelper.set_extra('CONTROL',client.getpeername()))
+            threading.Thread(target = file_control.sliding_window.acked, args=(decoded_message.serial_number,)).start()
             if progress_bar:
                 progress_bar.increase()
             acked_msgs +=1
     if progress_bar:
         progress_bar.end_print()
     return True
-        
+
+
 def handle_fim(client):
-    msg = client.recv(comum.SIMPLE_MESSAGE_SIZE)
-    decoded_message = MessageFactory.decode(msg)
+    while True:
+        msg = client.recv(comum.SIMPLE_MESSAGE_SIZE)
+        decoded_message = MessageFactory.decode(msg)
 
-    if decoded_message.type != "FIM":
-        logging.warning(f"[CONTROL CHANNEL] Server did not send FIM",extra=LogHelper.set_extra('CONTROL',client.getsockname()))
-        return False
-
-    print(f"\n[{client.getsockname()[0]}:{client.getsockname()[1]} - CONTROL CHANNEL] Server finished processing file")
-    return True
+        if decoded_message.type == "FIM":
+            print(f"\n[{client.getpeername()[0]}:{client.getpeername()[1]} - CONTROL CHANNEL] Server finished processing file")
+            return True
+        elif decoded_message.type == "ACK":
+            continue
+        else:
+            logging.warning("Server did not send neither a FIM or ACK message",extra=LogHelper.set_extra('CONTROL',client.getpeername()))
+            return False
 
 def terminate_control_channel(client):
-    logging.warning(f"Terminating connection",extra=LogHelper.set_extra('CONTROL',client.getsockname()))
+    logging.warning(f"Terminating connection",extra=LogHelper.set_extra('CONTROL',client.getpeername()))
     client.close()
 
 def terminate_data_channel(data_channel):
-    logging.warning(f"Terminating connection",extra=LogHelper.set_extra('DATA',data_channel.getsockname()))
+    logging.warning(f"Terminating connection",extra=LogHelper.set_extra('DATA',data_channel.getpeername()))
     data_channel.close()
 
 if __name__ == "__main__":
